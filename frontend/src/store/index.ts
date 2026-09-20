@@ -10,6 +10,14 @@ type PendingTask =
         height: string
         weight: string
         file: File
+        nextTryon?: {
+          file?: File
+          fileUrl?: string
+          scene?: string
+          itemName?: string
+          category?: string
+          saveToWardrobe?: boolean
+        }
       }
     }
   | {

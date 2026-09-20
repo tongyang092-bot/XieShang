@@ -1,23 +1,27 @@
 import json
 import os
 import shutil
+import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
+from app.core.media import PUBLIC_UPLOAD_BASE_URL, is_placeholder_url, usable_media_url
 from app.db import models
 from app.db.database import Base, engine, get_db
 from app.workflow.graph import app_workflow
 
 
-UPLOAD_DIR = "uploads"
+UPLOAD_DIR = os.getenv("XIESHANG_UPLOAD_DIR", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -112,7 +116,7 @@ def dt(value: Optional[datetime]) -> Optional[str]:
 
 
 def file_url_for(path: str) -> str:
-    return f"http://localhost:8000/uploads/{os.path.basename(path)}"
+    return f"{PUBLIC_UPLOAD_BASE_URL}/{os.path.basename(path)}"
 
 
 def save_upload(file: UploadFile, prefix: str) -> str:
@@ -124,17 +128,39 @@ def save_upload(file: UploadFile, prefix: str) -> str:
     return file_url_for(file_path)
 
 
+def clear_placeholder_profile_media(profile: models.UserProfile) -> bool:
+    changed = False
+    if is_placeholder_url(profile.base_avatar_url):
+        profile.base_avatar_url = None
+        changed = True
+    if is_placeholder_url(profile.avatar_url):
+        profile.avatar_url = "/mock/avatar.svg"
+        changed = True
+    return changed
+
+
+def workflow_error(result: dict[str, Any], required_fields: tuple[str, ...] = ()) -> Optional[str]:
+    if result.get("error_message"):
+        return str(result["error_message"])
+    missing = [field for field in required_fields if not usable_media_url(result.get(field))]
+    if missing:
+        return f"AI 处理未返回有效图片：{', '.join(missing)}"
+    return None
+
+
 def serialize_user(profile: models.UserProfile) -> dict[str, Any]:
+    base_avatar_url = usable_media_url(profile.base_avatar_url)
+    avatar_url = usable_media_url(profile.avatar_url) or base_avatar_url or "/mock/avatar.svg"
     return {
         "id": profile.id,
         "user_id": profile.user_id,
         "nickname": profile.nickname or "小鹿酱",
         "gender": profile.gender or "female",
-        "avatar_url": profile.avatar_url or profile.base_avatar_url or "/mock/avatar.svg",
+        "avatar_url": avatar_url,
         "height": profile.height,
         "weight": profile.weight,
         "original_photo_url": profile.original_photo_url,
-        "base_avatar_url": profile.base_avatar_url,
+        "base_avatar_url": base_avatar_url,
         "user_profile_tags": profile.user_profile_tags or {},
         "created_at": dt(profile.created_at),
         "updated_at": dt(profile.updated_at),
@@ -185,10 +211,10 @@ def serialize_record(record: models.TryonRecord) -> dict[str, Any]:
         "type": record.type,
         "scene": record.scene,
         "input_photo_url": record.input_photo_url,
-        "product_url": record.product_url,
+        "product_url": usable_media_url(record.product_url),
         "styling_suggestion": record.styling_suggestion,
-        "generated_product_url": record.generated_product_url,
-        "final_tryon_url": record.final_tryon_url,
+        "generated_product_url": usable_media_url(record.generated_product_url),
+        "final_tryon_url": usable_media_url(record.final_tryon_url),
         "created_at": dt(record.created_at),
     }
 
@@ -196,6 +222,10 @@ def serialize_record(record: models.TryonRecord) -> dict[str, Any]:
 def get_or_create_user(db: Session, user_id: str, nickname: str = "小鹿酱") -> models.UserProfile:
     profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == user_id).first()
     if profile:
+        if clear_placeholder_profile_media(profile):
+            profile.updated_at = now()
+            db.commit()
+            db.refresh(profile)
         seed_user_content(db, user_id)
         return profile
 
@@ -321,6 +351,8 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.get("/")
 def read_root():
+    if "FRONTEND_INDEX" in globals() and FRONTEND_INDEX.is_file():
+        return FileResponse(FRONTEND_INDEX)
     return {"message": "Welcome to Xieshang MVP API"}
 
 
@@ -332,6 +364,7 @@ def create_session(payload: SessionPayload, db: Session = Depends(get_db)):
         profile = models.UserProfile(user_id=user_id)
         db.add(profile)
 
+    clear_placeholder_profile_media(profile)
     profile.nickname = payload.nickname or profile.nickname or "小鹿酱"
     profile.gender = payload.gender or profile.gender or "female"
     profile.avatar_url = payload.avatar_url or profile.avatar_url or "/mock/avatar.svg"
@@ -626,6 +659,8 @@ async def websocket_process(websocket: WebSocket, db: Session = Depends(get_db))
         elif flow_type == "recommendation":
             query = payload.get("query")
             db_profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == user_id).first()
+            if db_profile and clear_placeholder_profile_media(db_profile):
+                db.commit()
             if not db_profile or not db_profile.base_avatar_url:
                 await websocket.send_json({"status": "error", "message": "请先完成形象固化。"})
                 await websocket.close()
@@ -642,6 +677,8 @@ async def websocket_process(websocket: WebSocket, db: Session = Depends(get_db))
         elif flow_type == "direct-tryon":
             file_url = payload.get("file_url")
             db_profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == user_id).first()
+            if db_profile and clear_placeholder_profile_media(db_profile):
+                db.commit()
             if not db_profile or not db_profile.base_avatar_url:
                 await websocket.send_json({"status": "error", "message": "请先完成形象固化。"})
                 await websocket.close()
@@ -649,6 +686,7 @@ async def websocket_process(websocket: WebSocket, db: Session = Depends(get_db))
             initial_state = {
                 "user_id": user_id,
                 "base_avatar_url": db_profile.base_avatar_url,
+                "user_profile_tags": db_profile.user_profile_tags or {},
                 "uploaded_product_url": file_url,
             }
         else:
@@ -661,8 +699,17 @@ async def websocket_process(websocket: WebSocket, db: Session = Depends(get_db))
             for node_name, state in event.items():
                 await websocket.send_json({"status": "progress", "node": node_name})
                 final_result.update(state)
+                if state.get("error_message"):
+                    await websocket.send_json({"status": "error", "message": str(state["error_message"])})
+                    await websocket.close()
+                    return
 
         if flow_type == "onboarding":
+            error = workflow_error(final_result, ("base_avatar_url",))
+            if error:
+                await websocket.send_json({"status": "error", "message": error})
+                await websocket.close()
+                return
             db_profile = get_or_create_user(db, user_id)
             db_profile.height = final_result.get("height", initial_state.get("height"))
             db_profile.weight = final_result.get("weight", initial_state.get("weight"))
@@ -685,6 +732,11 @@ async def websocket_process(websocket: WebSocket, db: Session = Depends(get_db))
             await websocket.send_json({"status": "success", "avatar_url": db_profile.base_avatar_url})
 
         elif flow_type == "recommendation":
+            error = workflow_error(final_result, ("generated_product_url", "final_tryon_url"))
+            if error:
+                await websocket.send_json({"status": "error", "message": error})
+                await websocket.close()
+                return
             record = add_tryon_record(
                 db,
                 {
@@ -708,6 +760,11 @@ async def websocket_process(websocket: WebSocket, db: Session = Depends(get_db))
             )
 
         elif flow_type == "direct-tryon":
+            error = workflow_error(final_result, ("final_tryon_url",))
+            if error:
+                await websocket.send_json({"status": "error", "message": error})
+                await websocket.close()
+                return
             product_url = initial_state.get("uploaded_product_url")
             record = add_tryon_record(
                 db,
@@ -756,6 +813,9 @@ async def onboarding_flow(
     original_photo_url = save_upload(file, f"{user_id}_onboarding")
     initial_state = {"user_id": user_id, "height": height, "weight": weight, "original_photo_url": original_photo_url}
     result = await app_workflow.ainvoke(initial_state, config={"configurable": {"thread_id": user_id}})
+    error = workflow_error(result, ("base_avatar_url",))
+    if error:
+        raise HTTPException(status_code=502, detail=error)
 
     db_profile = get_or_create_user(db, user_id)
     db_profile.height = result.get("height", height)
@@ -775,6 +835,8 @@ async def onboarding_flow(
 @app.post("/api/recommendation")
 async def ai_styling_tryon_flow(user_id: str = Form(...), query: str = Form(...), db: Session = Depends(get_db)):
     db_profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == user_id).first()
+    if db_profile and clear_placeholder_profile_media(db_profile):
+        db.commit()
     if not db_profile or not db_profile.base_avatar_url:
         raise HTTPException(status_code=400, detail="User profile not initialized. Please complete onboarding first.")
 
@@ -787,6 +849,9 @@ async def ai_styling_tryon_flow(user_id: str = Form(...), query: str = Form(...)
         "user_query": query,
     }
     result = await app_workflow.ainvoke(initial_state, config={"configurable": {"thread_id": user_id}})
+    error = workflow_error(result, ("generated_product_url", "final_tryon_url"))
+    if error:
+        raise HTTPException(status_code=502, detail=error)
     record = add_tryon_record(
         db,
         {
@@ -811,12 +876,22 @@ async def ai_styling_tryon_flow(user_id: str = Form(...), query: str = Form(...)
 @app.post("/api/direct-tryon")
 async def direct_product_tryon_flow(user_id: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
     db_profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == user_id).first()
+    if db_profile and clear_placeholder_profile_media(db_profile):
+        db.commit()
     if not db_profile or not db_profile.base_avatar_url:
         raise HTTPException(status_code=400, detail="User profile not initialized. Please complete onboarding first.")
 
     uploaded_product_url = save_upload(file, f"{user_id}_product")
-    initial_state = {"user_id": user_id, "base_avatar_url": db_profile.base_avatar_url, "uploaded_product_url": uploaded_product_url}
+    initial_state = {
+        "user_id": user_id,
+        "base_avatar_url": db_profile.base_avatar_url,
+        "user_profile_tags": db_profile.user_profile_tags or {},
+        "uploaded_product_url": uploaded_product_url,
+    }
     result = await app_workflow.ainvoke(initial_state, config={"configurable": {"thread_id": user_id}})
+    error = workflow_error(result, ("final_tryon_url",))
+    if error:
+        raise HTTPException(status_code=502, detail=error)
     record = add_tryon_record(
         db,
         {
@@ -827,3 +902,21 @@ async def direct_product_tryon_flow(user_id: str = Form(...), file: UploadFile =
         },
     )
     return {"status": "success", "record_id": record.id, "final_tryon_url": result.get("final_tryon_url")}
+
+
+def frontend_dist_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "frontend_dist"
+    return Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+FRONTEND_DIST = frontend_dist_dir()
+FRONTEND_INDEX = FRONTEND_DIST / "index.html"
+
+if FRONTEND_INDEX.is_file():
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend(full_path: str):
+        requested = (FRONTEND_DIST / full_path).resolve()
+        if requested.is_file() and (requested == FRONTEND_DIST.resolve() or FRONTEND_DIST.resolve() in requested.parents):
+            return FileResponse(requested)
+        return FileResponse(FRONTEND_INDEX)

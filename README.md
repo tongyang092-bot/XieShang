@@ -38,7 +38,8 @@ Copy-Item .env.example backend/.env
 编辑 `backend/.env`，至少配置以下内容：
 
 ```env
-ALIYUN_API_KEY=your_aliyun_api_key_here
+ALIYUN_API_KEY=
+DASHSCOPE_API_KEY=
 DATABASE_URL=postgresql://xieshang_user:xieshang_password@localhost:5432/xieshang_db
 BACKEND_HOST=0.0.0.0
 BACKEND_PORT=8000
@@ -97,9 +98,10 @@ cd backend
 Windows PowerShell：
 
 ```powershell
-.\venv\Scripts\Activate.ps1
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+.\start_backend.ps1
 ```
+
+脚本会先检查 8000 端口：如果本项目后端已经运行，则不会重复启动；需要重新加载后端代码时执行 `.\start_backend.ps1 -Restart`。如果端口由其他程序占用，脚本只报告进程信息，不会误杀其他程序。
 
 macOS/Linux：
 
@@ -113,6 +115,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```text
 http://127.0.0.1:8000
 ```
+
+### 生成 Windows 比赛提交包
+
+在项目根目录执行：
+
+```powershell
+.\build_windows_release.ps1
+```
+
+脚本会编译前端、生成 Windows 64 位可执行程序，并输出 `release/XieShang-Windows-x64.zip`。发行包不会包含 `backend/.env` 或真实 API Key；具体运行和密钥配置方式见 `docs/EXECUTABLE_GUIDE.md`。
 
 接口文档：
 

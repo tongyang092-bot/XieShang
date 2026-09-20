@@ -1,9 +1,12 @@
 import asyncio
+from pathlib import Path
 import dashscope
 from app.core.state import XieshangState
 from app.core.config import settings
+from app.core.media import persist_remote_image
 
-dashscope.api_key = settings.ALIYUN_API_KEY
+dashscope.api_key = settings.DASHSCOPE_API_KEY or settings.ALIYUN_API_KEY
+dashscope.base_http_api_url = settings.DASHSCOPE_BASE_HTTP_API_URL
 
 async def avatar_generator_node(state: XieshangState) -> dict:
     """
@@ -12,14 +15,14 @@ async def avatar_generator_node(state: XieshangState) -> dict:
     height = state.get('height', 170)
     weight = state.get('weight', 60)
     user_id = state.get('user_id')
-    tags = state.get('user_profile_tags', {})
+    tags = state.get('user_profile_tags') or {}
     
     photo_url = state.get('original_photo_url')
     import os
     if photo_url:
         file_name = photo_url.split('/')[-1]
         local_file_path = os.path.abspath(os.path.join("uploads", file_name))
-        file_uri = f"file://{local_file_path}"
+        file_uri = Path(local_file_path).resolve().as_uri()
     else:
         file_uri = None
 
@@ -55,13 +58,19 @@ async def avatar_generator_node(state: XieshangState) -> dict:
                 base_avatar_url = response.output.choices[0].message.content[0].get('image')
                 if base_avatar_url:
                     print(f"--> [Avatar Generator] 生图成功: {base_avatar_url}")
+                    try:
+                        base_avatar_url = await persist_remote_image(base_avatar_url, f"{user_id}_avatar")
+                    except Exception as persist_error:
+                        print(f"--> [Avatar Generator] 本地保存失败，暂用远程地址: {persist_error}")
                     return {"base_avatar_url": base_avatar_url}
             raise Exception(f"No results returned. Output: {response.output}")
         else:
-            print(f"--> [Avatar Generator] 生图失败: {response.message}")
-            return {"error_message": response.message}
+            raise Exception(response.message)
     except Exception as e:
         print(f"--> [Avatar Generator] 发生错误: {str(e)}")
-        # 降级返回 Mock 数据
-        base_avatar_url = f"https://mock-oss.com/users/{user_id}/base_avatar.jpg"
-        return {"base_avatar_url": base_avatar_url}
+        if photo_url:
+            return {
+                "base_avatar_url": photo_url,
+                "warning_message": f"基础形象生成失败，已使用原始上传照片：{str(e)}",
+            }
+        return {"error_message": f"基础形象生成失败：{str(e)}"}

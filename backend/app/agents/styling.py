@@ -3,8 +3,10 @@ import json
 import dashscope
 from app.core.state import XieshangState
 from app.core.config import settings
+from app.core.media import persist_remote_image
 
-dashscope.api_key = settings.ALIYUN_API_KEY
+dashscope.api_key = settings.DASHSCOPE_API_KEY or settings.ALIYUN_API_KEY
+dashscope.base_http_api_url = settings.DASHSCOPE_BASE_HTTP_API_URL
 
 async def styling_node(state: XieshangState) -> dict:
     """
@@ -12,7 +14,7 @@ async def styling_node(state: XieshangState) -> dict:
     并提取商品关键词，调用通义万相生成白底商品图。
     """
     user_query = state.get("user_query", "随便推荐")
-    tags = state.get("user_profile_tags", {})
+    tags = state.get("user_profile_tags") or {}
     user_id = state.get("user_id")
     
     print(f"--> [Styling Worker] 分析需求: '{user_query}'，结合用户特征: {tags}")
@@ -75,6 +77,10 @@ async def styling_node(state: XieshangState) -> dict:
                 generated_product_url = wanx_resp.output.choices[0].message.content[0].get('image')
                 if generated_product_url:
                     print(f"--> [Styling Worker] 商品图生成成功: {generated_product_url}")
+                    try:
+                        generated_product_url = await persist_remote_image(generated_product_url, f"{user_id}_product")
+                    except Exception as persist_error:
+                        print(f"--> [Styling Worker] 本地保存失败，暂用远程地址: {persist_error}")
                     return {
                         "styling_suggestion": suggestion,
                         "generated_product_url": generated_product_url
@@ -85,8 +91,4 @@ async def styling_node(state: XieshangState) -> dict:
             
     except Exception as e:
         print(f"--> [Styling Worker] 发生错误: {str(e)}")
-        # 降级 Mock
-        return {
-            "styling_suggestion": "根据您的特征，为您推荐了一套优雅的连衣裙，非常适合您的场景。",
-            "generated_product_url": f"https://mock-oss.com/generated/products/{user_id}/mock_dress.jpg"
-        }
+        return {"error_message": f"穿搭方案生成失败：{str(e)}"}

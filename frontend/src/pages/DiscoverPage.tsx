@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bell, Grid2X2, Heart, MoreHorizontal, Search, Shirt, Sparkles } from 'lucide-react'
+import { Bell, Bookmark, Grid2X2, Heart, Search, Shirt, Sparkles } from 'lucide-react'
 
-import { apiDiscoverPosts, apiToggleLike, type DiscoverPost } from '@/api/xieshang'
+import { apiDiscoverPosts, apiToggleFavorite, apiToggleLike, type DiscoverPost } from '@/api/xieshang'
 import { AppShell } from '@/components/AppShell'
 import { useAppStore } from '@/store'
 
@@ -35,9 +35,9 @@ const demoPosts = [
   image_url: String(image),
   author_name: String(author),
   author_avatar_url: String(avatar),
-  scene: '推荐',
-  channel: '推荐',
-  tags: ['灵感'],
+  scene: ['约会', '职场', '旅行', '职场', '日常休闲', '婚礼', '职场', '日常休闲', '约会'][index],
+  channel: ['推荐', '搭配技巧', '潮流趋势', '品牌', '搭配技巧', '潮流趋势', '品牌', '推荐', '潮流趋势'][index],
+  tags: [['温柔风', '约会'], ['通勤', '配色'], ['度假', '趋势'], ['轻奢品牌', '通勤'], ['休闲', '叠穿'], ['婚礼', '奶油色'], ['品牌精选', '显瘦'], ['周末', '舒适'], ['春季趋势', '氛围感']][index],
   like_count: Number(likes),
   favorite_count: 0,
   is_liked: false,
@@ -45,7 +45,7 @@ const demoPosts = [
 })) as DiscoverPost[]
 
 function imageFor(post: DiscoverPost, index: number) {
-  if (post.image_url?.startsWith('/assets/')) return post.image_url
+  if (post.image_url && !post.image_url.startsWith('/mock')) return post.image_url
   return demoPosts[index % demoPosts.length].image_url
 }
 
@@ -53,12 +53,18 @@ export default function DiscoverPage() {
   const { userId, setError } = useAppStore()
   const [posts, setPosts] = useState<DiscoverPost[]>([])
   const [channel, setChannel] = useState('推荐')
+  const [activeScene, setActiveScene] = useState('热门推荐')
   const [subTab, setSubTab] = useState('最新')
   const [query, setQuery] = useState('')
+  const [notice, setNotice] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    apiDiscoverPosts(userId, { channel: channel === '推荐' ? undefined : channel, q: query.trim() || undefined })
+    apiDiscoverPosts(userId, {
+      channel: channel === '推荐' ? undefined : channel,
+      scene: activeScene === '热门推荐' || activeScene === '更多' ? undefined : activeScene.replace('穿搭', ''),
+      q: query.trim() || undefined,
+    })
       .then((data) => {
         if (!cancelled) setPosts(data.length ? data : demoPosts)
       })
@@ -72,17 +78,41 @@ export default function DiscoverPage() {
     return () => {
       cancelled = true
     }
-  }, [channel, query, setError, userId])
+  }, [activeScene, channel, query, setError, userId])
 
-  const visiblePosts = useMemo(() => (posts.length ? posts : demoPosts).slice(0, 9), [posts])
+  const visiblePosts = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    const targetScene = activeScene.replace('穿搭', '')
+    const followedAuthors = new Set(['Olivia', '小夏天', '职场穿搭小助手', '穿搭研究所'])
+    const filtered = (posts.length ? posts : demoPosts)
+      .filter((post) => channel === '推荐' || post.channel === channel)
+      .filter((post) => activeScene === '热门推荐' || activeScene === '更多' || post.scene.includes(targetScene))
+      .filter((post) => !normalizedQuery || `${post.title} ${post.description} ${post.author_name} ${(post.tags || []).join(' ')}`.toLowerCase().includes(normalizedQuery))
+      .filter((post) => subTab !== '关注' || followedAuthors.has(post.author_name))
+
+    if (subTab === '最热') return [...filtered].sort((a, b) => b.like_count - a.like_count).slice(0, 9)
+    return [...filtered].sort((a, b) => b.id - a.id).slice(0, 9)
+  }, [activeScene, channel, posts, query, subTab])
 
   const like = async (post: DiscoverPost) => {
-    if (post.id <= demoPosts.length && post.image_url.startsWith('/assets/')) {
-      setPosts((prev) => prev.map((item) => (item.id === post.id ? { ...item, is_liked: !item.is_liked, like_count: item.like_count + (item.is_liked ? -1 : 1) } : item)))
-      return
+    setPosts((prev) => prev.map((item) => (item.id === post.id ? { ...item, is_liked: !item.is_liked, like_count: item.like_count + (item.is_liked ? -1 : 1) } : item)))
+    try {
+      const next = await apiToggleLike(post.id, userId)
+      setPosts((prev) => prev.map((item) => (item.id === next.id ? next : item)))
+    } catch {
+      // 离线演示时保留本地的即时反馈。
     }
-    const next = await apiToggleLike(post.id, userId)
-    setPosts((prev) => prev.map((item) => (item.id === next.id ? next : item)))
+  }
+
+  const favorite = async (post: DiscoverPost) => {
+    setPosts((prev) => prev.map((item) => (item.id === post.id ? { ...item, is_favorited: !item.is_favorited, favorite_count: item.favorite_count + (item.is_favorited ? -1 : 1) } : item)))
+    setNotice(post.is_favorited ? '已取消收藏' : '已收藏，可在“我的 > 我的收藏”查看')
+    try {
+      const next = await apiToggleFavorite(post.id, userId)
+      setPosts((prev) => prev.map((item) => (item.id === next.id ? next : item)))
+    } catch {
+      // 离线演示时保留本地的即时反馈。
+    }
   }
 
   return (
@@ -100,12 +130,14 @@ export default function DiscoverPage() {
               <Search className="h-4 w-4 text-[#6b7280]" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} className="min-w-0 flex-1 text-xs outline-none" placeholder="搜索穿搭、品牌" />
             </div>
-            <button className="relative grid h-7 w-7 place-items-center rounded-full bg-white" type="button">
+            <button className="relative grid h-7 w-7 place-items-center rounded-full bg-white" type="button" onClick={() => setNotice('暂无新通知，你关注的穿搭内容会在这里提醒。')}>
               <Bell className="h-4.5 w-4.5" />
               <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-[#ff6565]" />
             </button>
           </div>
         </header>
+
+        {notice ? <button className="mb-2 w-full rounded-xl bg-[#f4edff] px-3 py-2 text-left text-xs font-medium text-[#7650d6]" type="button" onClick={() => setNotice('')}>{notice}<span className="float-right text-[#9b82de]">关闭</span></button> : null}
 
         <div className="mb-2 flex items-center gap-7 text-left">
           {channels.map((item) => (
@@ -119,9 +151,10 @@ export default function DiscoverPage() {
         <div className="mb-4 grid h-[82px] grid-cols-7 rounded-[20px] bg-white p-2 shadow-[0_4px_12px_rgba(124,58,237,0.08)]">
           {sceneTabs.map((scene) => {
             const Icon = scene.icon
+            const active = activeScene === scene.label
             return (
-              <button key={scene.label} className="text-center active:scale-95" type="button">
-                <span className="mx-auto grid h-11 w-11 place-items-center rounded-full" style={{ backgroundColor: scene.bg, color: scene.color }}>
+              <button key={scene.label} className={`rounded-xl py-1 text-center active:scale-95 ${active ? 'bg-[#f4efff]' : ''}`} type="button" onClick={() => setActiveScene(scene.label === '更多' ? '热门推荐' : scene.label)}>
+                <span className={`mx-auto grid h-11 w-11 place-items-center rounded-full ${active ? 'ring-2 ring-[#9c76ee] ring-offset-1' : ''}`} style={{ backgroundColor: scene.bg, color: scene.color }}>
                   {scene.image ? <img src={scene.image} alt="" className="h-8 w-8 rounded-full object-cover" /> : Icon ? <Icon className="h-6 w-6 fill-current/10" /> : null}
                 </span>
                 <span className="mt-1 block truncate text-[11px] font-bold">{scene.label}</span>
@@ -147,9 +180,10 @@ export default function DiscoverPage() {
               <article key={`${post.id}-${index}`} className="min-w-0">
                 <div className="relative overflow-hidden rounded-xl bg-[#f2ece8]">
                   <img src={imageFor(post, index)} alt={post.title} className="aspect-[4/5] w-full object-cover" />
-                  <button className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full bg-white/92 text-[#737780]" type="button">
-                    <MoreHorizontal className="h-4 w-4" />
+                  <button className={`absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full bg-white/90 ${post.is_favorited ? 'text-[#8b5cf6]' : 'text-[#737780]'}`} type="button" onClick={() => favorite(post).catch(() => setError('收藏失败'))} aria-label={post.is_favorited ? '取消收藏' : '收藏'}>
+                    <Bookmark className="h-4 w-4" fill={post.is_favorited ? 'currentColor' : 'none'} />
                   </button>
+                  <span className="absolute bottom-1.5 left-1.5 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white">{post.channel} · {post.scene}</span>
                 </div>
                 <h3 className="mt-2 line-clamp-2 text-sm font-black leading-5">{post.title}</h3>
                 <div className="mt-2 flex items-center justify-between gap-1">
@@ -165,6 +199,7 @@ export default function DiscoverPage() {
               </article>
             ))}
           </div>
+          {!visiblePosts.length ? <div className="py-12 text-center"><div className="text-base font-bold">这个分类的内容正在上新</div><div className="mt-2 text-sm text-[#8a8d96]">试试“热门推荐”或切换其他频道</div><button className="mt-4 rounded-full bg-[#8b5cf6] px-5 py-2 text-sm font-bold text-white" type="button" onClick={() => { setActiveScene('热门推荐'); setChannel('推荐'); setQuery('') }}>查看热门推荐</button></div> : null}
         </div>
       </section>
     </AppShell>

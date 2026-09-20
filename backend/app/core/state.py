@@ -24,3 +24,4 @@ class XieshangState(TypedDict):
     # --- 最终输出 ---
     final_tryon_url: Optional[str]    # 虚拟试穿合成结果
     error_message: Optional[str]      # 错误信息
+    warning_message: Optional[str]    # 降级处理提示

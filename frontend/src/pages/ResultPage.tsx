@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Check, Copy, Download, Home, RotateCcw, Sparkles } from 'lucide-react'
+import { ArrowLeft, Check, Copy, Home, Maximize2, RotateCcw, Sparkles } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { ImageLightbox } from '@/components/ImageLightbox'
 import { useAppStore } from '@/store'
 
 function canPreview(url?: string) {
@@ -29,7 +30,7 @@ function CopyButton({ value }: { value?: string }) {
   )
 }
 
-function ImagePanel({ title, url }: { title: string; url?: string }) {
+function ImagePanel({ title, url, onPreview }: { title: string; url?: string; onPreview: (url: string, title: string) => void }) {
   return (
     <div className="overflow-hidden rounded-lg bg-white shadow-sm">
       <div className="flex items-center justify-between px-3 py-3">
@@ -37,7 +38,12 @@ function ImagePanel({ title, url }: { title: string; url?: string }) {
         <CopyButton value={url} />
       </div>
       {canPreview(url) ? (
-        <img src={url} alt={title} className="max-h-[520px] w-full bg-slate-50 object-contain" />
+        <button className="group relative block w-full bg-slate-50" type="button" onClick={() => url && onPreview(url, title)}>
+          <img src={url} alt={title} className="max-h-[520px] w-full object-contain" />
+          <span className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-black/65 px-3 py-2 text-xs font-medium text-white opacity-0 transition group-hover:opacity-100">
+            <Maximize2 className="h-4 w-4" />放大查看
+          </span>
+        </button>
       ) : (
         <div className="px-3 pb-3">
           <div className="rounded-lg bg-slate-50 px-3 py-10 text-center text-xs text-slate-500">{url || '暂无图片'}</div>
@@ -50,6 +56,7 @@ function ImagePanel({ title, url }: { title: string; url?: string }) {
 export default function ResultPage() {
   const navigate = useNavigate()
   const { lastResult, setLastResult } = useAppStore()
+  const [preview, setPreview] = useState<{ src: string; title: string } | null>(null)
 
   const title = !lastResult
     ? '暂无结果'
@@ -86,7 +93,7 @@ export default function ResultPage() {
         ) : null}
 
         <div className="space-y-4">
-          {lastResult?.type === 'onboarding' ? <ImagePanel title="你的专属形象" url={lastResult.avatarUrl} /> : null}
+          {lastResult?.type === 'onboarding' ? <ImagePanel title="你的专属形象" url={lastResult.avatarUrl} onPreview={(src, panelTitle) => setPreview({ src, title: panelTitle })} /> : null}
 
           {lastResult?.type === 'recommendation' ? (
             <>
@@ -95,15 +102,15 @@ export default function ResultPage() {
                 <p className="text-sm leading-6 text-slate-600">{lastResult.stylingSuggestion}</p>
                 {lastResult.scene ? <div className="mt-3 rounded-full bg-[#f0e9ff] px-3 py-2 text-xs text-[#6d57d9]">{lastResult.scene}</div> : null}
               </div>
-              <ImagePanel title="AI 商品图" url={lastResult.generatedProductUrl} />
-              <ImagePanel title="最终试穿效果" url={lastResult.finalTryonUrl} />
+              <ImagePanel title="AI 商品图" url={lastResult.generatedProductUrl} onPreview={(src, panelTitle) => setPreview({ src, title: panelTitle })} />
+              <ImagePanel title="最终试穿效果" url={lastResult.finalTryonUrl} onPreview={(src, panelTitle) => setPreview({ src, title: panelTitle })} />
             </>
           ) : null}
 
           {lastResult?.type === 'directTryon' ? (
             <>
-              {lastResult.productUrl ? <ImagePanel title="试穿商品" url={lastResult.productUrl} /> : null}
-              <ImagePanel title="最终试穿效果" url={lastResult.finalTryonUrl} />
+              {lastResult.productUrl ? <ImagePanel title="试穿商品" url={lastResult.productUrl} onPreview={(src, panelTitle) => setPreview({ src, title: panelTitle })} /> : null}
+              <ImagePanel title="最终试穿效果" url={lastResult.finalTryonUrl} onPreview={(src, panelTitle) => setPreview({ src, title: panelTitle })} />
             </>
           ) : null}
         </div>
@@ -132,14 +139,15 @@ export default function ResultPage() {
                   : lastResult?.type === 'recommendation'
                     ? lastResult.finalTryonUrl
                     : lastResult?.finalTryonUrl
-              if (url) window.open(url, '_blank')
+              if (url) setPreview({ src: url, title: '试穿效果' })
             }}
           >
-            <Download className="h-4 w-4" />
-            打开
+            <Maximize2 className="h-4 w-4" />
+            放大
           </Button>
         </div>
       </main>
+      <ImageLightbox open={Boolean(preview)} src={preview?.src} title={preview?.title} onClose={() => setPreview(null)} />
     </div>
   )
 }

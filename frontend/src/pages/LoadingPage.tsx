@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Loader2, Sparkles } from 'lucide-react'
 
 import { apiUpload, type TryonRecord } from '@/api/xieshang'
 import { Button } from '@/components/ui/button'
+import { apiBaseUrl } from '@/api/client'
 import { useAppStore } from '@/store'
 
 interface WsResult {
@@ -60,6 +61,7 @@ export default function LoadingPage() {
     setError(null)
     setIsLoading(true)
     setLoadingStage(0)
+    setDone([])
 
     const mark = (index: number) => {
       setDone((prev) => (prev.includes(index) ? prev : [...prev, index]))
@@ -80,8 +82,7 @@ export default function LoadingPage() {
           mark(0)
         }
 
-        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
-        const ws = new WebSocket(`${baseUrl.replace(/^http/, 'ws')}/ws/process`)
+        const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, 'ws')}/ws/process`)
         wsRef.current = ws
 
         ws.onopen = () => {
@@ -146,6 +147,10 @@ export default function LoadingPage() {
               if (pendingTask.type === 'onboarding') {
                 const avatarUrl = data.avatar_url || ''
                 setBaseAvatarUrl(avatarUrl)
+                if (pendingTask.payload.nextTryon) {
+                  setPendingTask({ type: 'directTryon', payload: pendingTask.payload.nextTryon })
+                  return
+                }
                 setLastResult({ type: 'onboarding', avatarUrl, recordId: data.record_id })
               } else if (pendingTask.type === 'recommendation') {
                 const record: TryonRecord = {

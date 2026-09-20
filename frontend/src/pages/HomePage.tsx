@@ -4,6 +4,7 @@ import { Bell, Bot, ChevronRight, Crown, Heart, Link2, Plus, Send, Shirt, Sparkl
 
 import { apiProfileSummary, apiTryonRecords } from '@/api/xieshang'
 import { AppShell } from '@/components/AppShell'
+import { ImageLightbox } from '@/components/ImageLightbox'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/store'
 
@@ -38,9 +39,14 @@ export default function HomePage() {
   } = useAppStore()
   const [personFile, setPersonFile] = useState<File | null>(null)
   const [productFile, setProductFile] = useState<File | null>(null)
+  const [personPreviewUrl, setPersonPreviewUrl] = useState('')
+  const [productPreviewUrl, setProductPreviewUrl] = useState('')
   const [productUrl, setProductUrl] = useState('')
   const [chat, setChat] = useState('')
   const [stats, setStats] = useState({ wardrobe_count: 0, tryon_count: 0 })
+  const [preview, setPreview] = useState<{ src: string; title: string } | null>(null)
+  const [notice, setNotice] = useState('')
+  const [favoritePreviews, setFavoritePreviews] = useState<number[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -56,6 +62,26 @@ export default function HomePage() {
     }
   }, [setRecentRecords, userId])
 
+  useEffect(() => {
+    if (!personFile) {
+      setPersonPreviewUrl('')
+      return
+    }
+    const previewUrl = URL.createObjectURL(personFile)
+    setPersonPreviewUrl(previewUrl)
+    return () => URL.revokeObjectURL(previewUrl)
+  }, [personFile])
+
+  useEffect(() => {
+    if (!productFile) {
+      setProductPreviewUrl('')
+      return
+    }
+    const previewUrl = URL.createObjectURL(productFile)
+    setProductPreviewUrl(previewUrl)
+    return () => URL.revokeObjectURL(previewUrl)
+  }, [productFile])
+
   const previewItems = useMemo(() => {
     const recent = recentRecords
       .filter((item) => item.final_tryon_url)
@@ -67,9 +93,19 @@ export default function HomePage() {
   const startTryOn = () => {
     setError(null)
     if (!baseAvatarUrl && personFile) {
+      const nextTryon = productFile || productUrl.trim()
+        ? {
+            file: productFile || undefined,
+            fileUrl: productUrl.trim() || undefined,
+            scene: chat.trim() || '指定商品试穿',
+            itemName: '导入服装',
+            category: '上衣',
+            saveToWardrobe: true,
+          }
+        : undefined
       setPendingTask({
         type: 'onboarding',
-        payload: { height: height || '165', weight: weight || '50', file: personFile },
+        payload: { height: height || '165', weight: weight || '50', file: personFile, nextTryon },
       })
       navigate('/loading')
       return
@@ -110,6 +146,12 @@ export default function HomePage() {
     navigate('/loading')
   }
 
+  const openAssistant = () => {
+    const query = chat.trim()
+    if (!query) return
+    navigate('/assistant', { state: { query } })
+  }
+
   return (
     <AppShell withInputPadding>
       <section className="relative pt-4">
@@ -121,11 +163,11 @@ export default function HomePage() {
             <div className="mt-2 text-[15px] tracking-[0.18em] text-[#666]">AI · 让穿搭更懂你</div>
           </div>
           <div className="flex items-center gap-1.5 pt-1">
-            <button className="flex h-7 items-center gap-1 rounded-full border border-[#f2d5a8] bg-[#fff4df] px-2 text-[11px] font-semibold text-[#b7791f] shadow-sm" type="button">
+            <button className="flex h-7 items-center gap-1 rounded-full border border-[#f2d5a8] bg-[#fff4df] px-2 text-[11px] font-semibold text-[#b7791f] shadow-sm" type="button" onClick={() => navigate('/profile')}>
               <Crown className="h-3 w-3 fill-[#d18b25]" />
               会员中心
             </button>
-            <button className="relative grid h-7 w-7 place-items-center rounded-full bg-white" type="button">
+            <button className="relative grid h-7 w-7 place-items-center rounded-full bg-white" type="button" onClick={() => setNotice('暂无新通知，试穿完成后会在这里提醒你。')}>
               <Bell className="h-4.5 w-4.5" />
               <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-[#ff6565]" />
             </button>
@@ -161,6 +203,7 @@ export default function HomePage() {
         </div>
 
         {error ? <div className="mb-3 rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div> : null}
+        {notice ? <button className="mb-3 w-full rounded-2xl bg-[#f4edff] px-3 py-2 text-left text-xs text-[#7650d6]" type="button" onClick={() => setNotice('')}>{notice}<span className="float-right">关闭</span></button> : null}
 
         <div className="rounded-[20px] bg-white p-3 shadow-[0_8px_24px_rgba(124,58,237,0.14)]">
           <div className="grid grid-cols-2 gap-2">
@@ -171,15 +214,19 @@ export default function HomePage() {
                 <label className="flex h-[126px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#d8c3ff] bg-[#fbf8ff] text-[#8b5cf6] active:scale-95">
                   <Plus className="h-7 w-7" />
                   <span className="mt-4 inline-flex h-7 min-w-[62px] items-center justify-center whitespace-nowrap rounded-[12px] bg-[#8b5cf6] px-2 text-[11px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(124,58,237,0.35)]">
-                    上传照片
+                    {personFile ? '已选择照片' : '上传照片'}
                   </span>
                   <input className="hidden" type="file" accept="image/*" onChange={(event) => setPersonFile(event.target.files?.[0] || null)} />
                 </label>
                 <div className="h-[126px] overflow-hidden rounded-xl bg-[#faf8ff]">
                   <img
-                    src={baseAvatarUrl || `${A}/tryon_effect_02.png`}
+                    src={personPreviewUrl || baseAvatarUrl || `${A}/tryon_effect_02.png`}
                     alt="基础人体"
-                    className={`h-full w-full ${baseAvatarUrl ? 'object-contain object-bottom' : 'scale-[1.12] object-cover object-center'}`}
+                    className={`h-full w-full ${personPreviewUrl || baseAvatarUrl ? 'object-contain object-bottom' : 'scale-[1.12] object-cover object-center'}`}
+                    onError={(event) => {
+                      event.currentTarget.onerror = null
+                      event.currentTarget.src = `${A}/tryon_effect_02.png`
+                    }}
                   />
                 </div>
               </div>
@@ -196,8 +243,12 @@ export default function HomePage() {
                 <span className="h-px flex-1 bg-[#ece8f5]" />或<span className="h-px flex-1 bg-[#ece8f5]" />
               </div>
               <label className="flex h-11 cursor-pointer items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-[#d8c3ff] bg-[#fbf8ff] px-2 text-[13px] font-bold text-[#8b5cf6] active:scale-95">
-                <Shirt className="h-5 w-5 shrink-0" />
-                {productFile ? '已选择服装' : '上传服装图片'}
+                {productPreviewUrl ? (
+                  <img src={productPreviewUrl} alt="已选择服装" className="h-8 w-8 shrink-0 rounded-md bg-white object-contain" />
+                ) : (
+                  <Shirt className="h-5 w-5 shrink-0" />
+                )}
+                <span className="max-w-[112px] truncate">{productFile ? productFile.name : '上传服装图片'}</span>
                 <input className="hidden" type="file" accept="image/*" onChange={(event) => setProductFile(event.target.files?.[0] || null)} />
               </label>
             </div>
@@ -216,17 +267,27 @@ export default function HomePage() {
         <div className="mt-2.5 rounded-[20px] bg-white p-3 shadow-[0_4px_12px_rgba(124,58,237,0.08)]">
           <div className="mb-2.5 flex items-center justify-between">
             <h2 className="text-[16px] font-bold leading-5">试穿效果预览</h2>
-            <button className="flex items-center text-xs font-medium text-[#8a8d96]" type="button" onClick={() => navigate('/profile')}>
+            <button className="flex items-center text-xs font-medium text-[#8a8d96]" type="button" onClick={() => navigate('/tryons')}>
               查看更多 <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
           <div className="grid grid-cols-3 gap-3">
             {previewItems.slice(0, 3).map((item, index) => (
               <div className="relative overflow-hidden rounded-xl bg-[#f5f1ee]" key={`${item.image}-${index}`}>
-                <img src={item.image} alt="试穿预览" className="aspect-[4/5] w-full object-cover object-top" />
+                <button className="block w-full" type="button" onClick={() => setPreview({ src: item.image, title: item.label === '最近' ? '最近试穿效果' : '试穿效果示例' })}>
+                  <img
+                    src={item.image}
+                    alt="试穿预览"
+                    className="aspect-[4/5] w-full object-cover object-top"
+                    onError={(event) => {
+                      event.currentTarget.onerror = null
+                      event.currentTarget.src = previews[index % previews.length].image
+                    }}
+                  />
+                </button>
                 <span className="absolute left-2 top-2 rounded-md bg-[#ff9bcb] px-2 py-1 text-xs font-bold text-white">{item.label}</span>
-                <button className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-white/90 text-[#8a8d96]" type="button">
-                  <Heart className="h-5 w-5" />
+                <button className={`absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-white/90 ${favoritePreviews.includes(index) ? 'text-[#ff6b9d]' : 'text-[#8a8d96]'}`} type="button" onClick={() => setFavoritePreviews((value) => value.includes(index) ? value.filter((item) => item !== index) : [...value, index])} aria-label={favoritePreviews.includes(index) ? '取消收藏' : '收藏试穿效果'}>
+                  <Heart className="h-5 w-5" fill={favoritePreviews.includes(index) ? 'currentColor' : 'none'} />
                 </button>
               </div>
             ))}
@@ -251,14 +312,15 @@ export default function HomePage() {
           <div className="grid h-10 w-10 place-items-center rounded-full bg-[#8b5cf6] text-white">
             <Bot className="h-6 w-6" />
           </div>
-          <input value={chat} onChange={(event) => setChat(event.target.value)} className="min-w-0 flex-1 text-base outline-none placeholder:text-[#9ca3af]" placeholder="有什么穿搭问题都可以问我哦~" />
-          <button className="grid h-10 w-10 place-items-center rounded-full bg-[#8b5cf6] text-white shadow-[0_8px_18px_rgba(124,58,237,0.35)] active:scale-95" type="button" onClick={() => chat.trim() && runScene(chat.trim())}>
+          <input value={chat} onChange={(event) => setChat(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && openAssistant()} className="min-w-0 flex-1 text-base outline-none placeholder:text-[#9ca3af]" placeholder="有什么穿搭问题都可以问我哦~" />
+          <button className="grid h-10 w-10 place-items-center rounded-full bg-[#8b5cf6] text-white shadow-[0_8px_18px_rgba(124,58,237,0.35)] active:scale-95" type="button" onClick={openAssistant}>
             <Send className="h-5 w-5" />
           </button>
         </div>
 
         <div className="mt-2 text-center text-[11px] text-[#9ca3af]">{stats.wardrobe_count} 件衣橱单品 · {stats.tryon_count} 次试穿</div>
       </section>
+      <ImageLightbox open={Boolean(preview)} src={preview?.src} title={preview?.title} onClose={() => setPreview(null)} />
     </AppShell>
   )
 }

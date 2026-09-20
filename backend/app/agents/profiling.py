@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 from app.core.state import XieshangState
 import asyncio
 import dashscope
 from app.core.config import settings
 
-dashscope.api_key = settings.ALIYUN_API_KEY
+dashscope.api_key = settings.DASHSCOPE_API_KEY or settings.ALIYUN_API_KEY
+dashscope.base_http_api_url = settings.DASHSCOPE_BASE_HTTP_API_URL
 
 async def profiling_node(state: XieshangState) -> dict:
     """
@@ -16,7 +18,7 @@ async def profiling_node(state: XieshangState) -> dict:
     file_name = photo_url.split('/')[-1]
     import os
     local_file_path = os.path.abspath(os.path.join("uploads", file_name))
-    file_uri = f"file://{local_file_path}"
+    file_uri = Path(local_file_path).resolve().as_uri()
     
     print(f"--> [Profiling Worker] 正在分析用户 {state['user_id']} 的照片: {file_uri}")
     

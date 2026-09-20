@@ -17,6 +17,9 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 dist/
+backend/build-release/
+backend/dist-release/
+release/
 
 # Runtime data
 backend/uploads/
